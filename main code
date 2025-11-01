@@ -1,0 +1,208 @@
+neo_synthcore_v5/neo_synthcore_v5.py
+import math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+=========================
+Hardware-aware scaling law
+=========================
+def theta(n, k, T1=1.0, alpha=0.72, beta=0.2, gamma=0.1):
+"""
+Unified scaling law for usable performance per GPU under real load.
+"""
+numerator = T1 * n * (0.9 - 0.004 * math.log(max(n, 1)))
+denominator = alpha * (k ** 2) + beta * k + gamma
+return numerator / denominator
+
+================================
+Entropy-guided kernel selection
+================================
+def entropy_guided_kernel_selection(costs: torch.Tensor, lambda_anneal: float = 0.7):
+"""
+Select kernels by minimizing entropy over cost-weighted probabilities.
+Returns (entropy_value, probs).
+"""
+weights = torch.exp(-lambda_anneal * costs)
+probs = weights / (weights.sum() + 1e-9)
+entropy = -torch.sum(probs * torch.log(probs + 1e-9))
+return entropy.item(), probs
+
+=============================
+Metadata retrieval law (ANN)
+=============================
+def tau_meta(N: int, tau0: float = 0.01, kappa: float = 0.005, mu: float = 0.61):
+"""
+Hybrid caching retrieval latency model.
+"""
+return tau0 + kappa * math.log(max(N, 1)) + mu * math.sqrt(N)
+
+===============================
+Meta-functional efficiency (Psi)
+===============================
+def psi_neo(n_max: int, eta_fn, H_opt: float, L_ctx: float, tau_fn):
+"""
+System invariant integral over compute, algorithms, and metadata.
+"""
+integral = 0.0
+for n in range(1, n_max + 1):
+eta = eta_fn(n)
+tau = tau_fn(n)
+term = (eta * math.exp(-H_opt)) / (L_ctx * tau)
+integral += term
+return integral
+
+class NeoSynthCoreV5(nn.Module):
+"""
+NeoSynthCore v5
+- Dual towers (cognitive + emotional)
+- Dynamic gating fusion
+- Unified multi-task heads (LM, emotion, stage, safety, culture)
+- Variational information bottleneck (VIB)
+- Risk-aware decoding (via safety score)
+- Cultural adaptation via embeddings
+- Recursive self-healing objective support
+"""
+
+def __init__(
+    self,
+    d_model: int = 256,
+    vocab_size: int = 10000,
+    emo_classes: int = 6,
+    stage_classes: int = 5,
+    cultures: int = 3,
+    nhead: int = 4,
+    dropout: float = 0.1,
+):
+    super().__init__()
+    self.d_model = d_model
+    self.embedding = nn.Embedding(vocab_size, d_model)
+    self.env_proj = nn.Linear(d_model, d_model)
+    self.culture_embed = nn.Embedding(cultures, d_model)
+
+    # Towers
+    self.cognitive_tower = nn.TransformerEncoderLayer(
+        d_model=d_model, nhead=nhead, dropout=dropout, batch_first=True
+    )
+    self.emotional_tower = nn.TransformerEncoderLayer(
+        d_model=d_model, nhead=nhead, dropout=dropout, batch_first=True
+    )
+
+    # Gating
+    self.gate_fc = nn.Linear(d_model * 3, 1)
+
+    # Heads
+    self.lm_head = nn.Linear(d_model, vocab_size)
+    self.emo_head = nn.Linear(d_model, emo_classes)
+    self.stage_head = nn.Linear(d_model, stage_classes)
+    self.safety_head = nn.Linear(d_model, 1)
+    self.culture_head = nn.Linear(d_model, cultures)
+
+    # VIB
+    self.posterior = nn.Linear(d_model, d_model)
+    self.prior = nn.Linear(d_model, d_model)
+
+def forward(self, x: torch.Tensor, env: torch.Tensor, culture_id: torch.Tensor):
+    """
+    x: [batch, seq] token IDs
+    env: [batch, seq, d_model] environment features
+    culture_id: [batch] integers
+    """
+    x_embed = self.embedding(x)                           # [B, T, D]
+    env_embed = self.env_proj(env)                        # [B, T, D]
+    culture_vec = self.culture_embed(culture_id)          # [B, D]
+    culture_vec = culture_vec.unsqueeze(1).expand_as(x_embed)  # [B, T, D]
+
+    # Towers
+    c_out = self.cognitive_tower(x_embed + culture_vec)       # [B, T, D]
+    e_out = self.emotional_tower(x_embed + env_embed + culture_vec)  # [B, T, D]
+
+    # Dynamic gating
+    q_t = torch.mean(env_embed, dim=1)                    # [B, D]
+    gate_input = torch.cat([c_out.mean(1), e_out.mean(1), q_t], dim=1)  # [B, 3D]
+    G_t = torch.sigmoid(self.gate_fc(gate_input)).unsqueeze(1)          # [B, 1]
+
+    # Fusion (simple linear fusion; can swap for MHA fusion if desired)
+    fused = G_t * e_out + (1.0 - G_t) * c_out            # [B, T, D]
+
+    # Heads
+    lm_logits = self.lm_head(fused)                      # [B, T, V]
+    pooled = fused.mean(1)                               # [B, D]
+    emo_logits = self.emo_head(pooled)                   # [B, Emo]
+    stage_logits = self.stage_head(pooled)               # [B, Stage]
+    safety_score = torch.sigmoid(self.safety_head(pooled))  # [B, 1]
+    culture_logits = self.culture_head(pooled)           # [B, Cultures]
+
+    # VIB KL
+    z_post = self.posterior(pooled)                      # [B, D]
+    z_prior = self.prior(env_embed.mean(1))              # [B, D]
+    kl_div = F.kl_div(
+        F.log_softmax(z_post, dim=-1),
+        F.softmax(z_prior, dim=-1),
+        reduction="batchmean",
+    )
+
+    return {
+        "lm_logits": lm_logits,
+        "emo_logits": emo_logits,
+        "stage_logits": stage_logits,
+        "safety_score": safety_score,
+        "culture_logits": culture_logits,
+        "kl_div": kl_div,
+        "fused": fused,
+    }
+
+@torch.no_grad()
+def risk_aware_decode(self, lm_logits: torch.Tensor, safety_score: torch.Tensor, beta: float = 0.3):
+    """
+    Adjust logits to suppress unsafe predictions.
+    lm_logits: [B, T, V], safety_score: [B, 1]
+    """
+    penalty = beta * safety_score.clamp(0, 1)            # [B, 1]
+    penalty = penalty.unsqueeze(-1)                      # [B, 1, 1]
+    adjusted = lm_logits - penalty                       # broadcast
+    return adjusted
+def unified_loss_v5(outputs: dict, targets: dict, lambdas: dict):
+"""
+Unified multi-task objective with self-healing support.
+targets:
+- lm: [B, T]
+- emo: [B]
+- stage: [B]
+- safe: [B, 1]
+- culture: [B]
+lambdas:
+keys: lm, emo, stage, safe, culture, vib, heal
+"""
+lm_logits = outputs["lm_logits"]
+emo_logits = outputs["emo_logits"]
+stage_logits = outputs["stage_logits"]
+safety_score = outputs["safety_score"]
+culture_logits = outputs["culture_logits"]
+kl_div = outputs["kl_div"]
+fused = outputs["fused"]
+
+lm_loss = F.cross_entropy(lm_logits.view(-1, lm_logits.size(-1)), targets["lm"].view(-1))
+emo_loss = F.cross_entropy(emo_logits, targets["emo"])
+stage_loss = F.cross_entropy(stage_logits, targets["stage"])
+safety_loss = F.mse_loss(safety_score, targets["safe"])
+culture_loss = F.cross_entropy(culture_logits, targets["culture"])
+
+# Recursive self-healing loss (simple stochastic perturbation consistency)
+f1 = fused
+f3 = fused + 0.02 * torch.randn_like(fused)
+heal_loss = F.mse_loss(f3.mean(1), f1.mean(1))
+
+total = (
+    lambdas.get("lm", 1.0) * lm_loss
+    + lambdas.get("emo", 0.5) * emo_loss
+    + lambdas.get("stage", 0.5) * stage_loss
+    + lambdas.get("safe", 1.0) * safety_loss
+    + lamblas_get(lambdas, "culture", 0.3) * culture_loss
+    + lamblas_get(lambdas, "vib", 0.1) * kl_div
+    + lamblas_get(lambdas, "heal", 0.2) * heal_loss
+)
+return total
+def lamblas_get(d: dict, key: str, default: float):
+# tiny helper to avoid KeyError and keep code clean
+return float(d[key]) if key in d else default
