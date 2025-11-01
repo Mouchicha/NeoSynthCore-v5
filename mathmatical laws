@@ -1,0 +1,17 @@
+import math
+import torch
+
+def theta(n, k, T1=1.0, alpha=0.72, beta=0.2, gamma=0.1):
+return T1 * n * (0.9 - 0.004 * math.log(n)) / (alpha * k**2 + beta * k + gamma)
+
+def entropy_guided_kernel_selection(costs, lambda_anneal=0.7):
+weights = torch.exp(-lambda_anneal * costs)
+probs = weights / weights.sum()
+entropy = -torch.sum(probs * torch.log(probs + 1e-9))
+return entropy.item(), probs
+
+def tau_meta(N, tau0=0.01, kappa=0.005, mu=0.61):
+return tau0 + kappa * math.log(N) + mu * math.sqrt(N)
+
+def psi_neo(n_max, eta_fn, H_opt, L_ctx, tau_fn):
+return sum((eta_fn(n) * math.exp(-H_opt)) / (L_ctx * tau_fn(n)) for n in range(1, n_max + 1))
