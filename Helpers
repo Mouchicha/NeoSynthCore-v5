@@ -1,0 +1,2 @@
+def lamblas_get(d, key, default):
+return float(d[key]) if key in d else default
