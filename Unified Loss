@@ -1,19 +1,4 @@
 import torch.nn.functional as F
 
-def unified_loss_v5(outputs, targets, lambdas):
-lm_loss = F.cross_entropy(outputs["lm_logits"].view(-1, outputs["lm_logits"].size(-1)), targets["lm"].view(-1))
-emo_loss = F.cross_entropy(outputs["emo_logits"], targets["emo"])
-stage_loss = F.cross_entropy(outputs["stage_logits"], targets["stage"])
-safety_loss = F.mse_loss(outputs["safety_score"], targets["safe"])
-culture_loss = F.cross_entropy(outputs["culture_logits"], targets["culture"])
-heal_loss = F.mse_loss(outputs["fused"], outputs["fused"] + 0.02 * torch.randn_like(outputs["fused"]))
-
-return (
-    lambdas["lm"] * lm_loss +
-    lambdas["emo"] * emo_loss +
-    lambdas["stage"] * stage_loss +
-    lambdas["safe"] * safety_loss +
-    lambdas["culture"] * culture_loss +
-    lambdas["vib"] * outputs["kl_div"] +
-    lambdas["heal"] * heal_loss
+def unified_loss_v5(outputs, targets, lambdas)
 )
