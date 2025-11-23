@@ -1,129 +1,18 @@
-neo_synthcore_v5/neo_synthcore_v5.py
-import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-=========================
-Hardware-aware scaling law
-=========================
-def theta(n, k, T1=1.0, alpha=0.72, beta=0.2, gamma=0.1):
-"""
-Unified scaling law for usable performance per GPU under real load.
-"""
-numerator = T1 * n * (0.9 - 0.004 * math.log(max(n, 1)))
-denominator = alpha * (k ** 2) + beta * k + gamma
-return numerator / denominator
-
-================================
-Entropy-guided kernel selection
-================================
-def entropy_guided_kernel_selection(costs: torch.Tensor, lambda_anneal: float = 0.7):
-"""
-Select kernels by minimizing entropy over cost-weighted probabilities.
-Returns (entropy_value, probs).
-"""
-weights = torch.exp(-lambda_anneal * costs)
-probs = weights / (weights.sum() + 1e-9)
-entropy = -torch.sum(probs * torch.log(probs + 1e-9))
-return entropy.item(), probs
-
-=============================
-Metadata retrieval law (ANN)
-=============================
-def tau_meta(N: int, tau0: float = 0.01, kappa: float = 0.005, mu: float = 0.61):
-"""
-Hybrid caching retrieval latency model.
-"""
-return tau0 + kappa * math.log(max(N, 1)) + mu * math.sqrt(N)
-
-===============================
-Meta-functional efficiency (Psi)
-===============================
-def psi_neo(n_max: int, eta_fn, H_opt: float, L_ctx: float, tau_fn):
-"""
-System invariant integral over compute, algorithms, and metadata.
-"""
-integral = 0.0
-for n in range(1, n_max + 1):
-eta = eta_fn(n)
-tau = tau_fn(n)
-term = (eta * math.exp(-H_opt)) / (L_ctx * tau)
-integral += term
-return integral
-
-class NeoSynthCoreV5(nn.Module):
-"""
-NeoSynthCore v5
-- Dual towers (cognitive + emotional)
-- Dynamic gating fusion
-- Unified multi-task heads (LM, emotion, stage, safety, culture)
-- Variational information bottleneck (VIB)
-- Risk-aware decoding (via safety score)
-- Cultural adaptation via embeddings
-- Recursive self-healing objective support
-"""
-
-def __init__(
-    self,
-    d_model: int = 256,
-    vocab_size: int = 10000,
-    emo_classes: int = 6,
-    stage_classes: int = 5,
-    cultures: int = 3,
-    nhead: int = 4,
-    dropout: float = 0.1,
-):
-    super().__init__()
-    self.d_model = d_model
-    self.embedding = nn.Embedding(vocab_size, d_model)
-    self.env_proj = nn.Linear(d_model, d_model)
-    self.culture_embed = nn.Embedding(cultures, d_model)
-
-    # Towers
-    self.cognitive_tower = nn.TransformerEncoderLayer(
-        d_model=d_model, nhead=nhead, dropout=dropout, batch_first=True
-    )
-    self.emotional_tower = nn.TransformerEncoderLayer(
-        d_model=d_model, nhead=nhead, dropout=dropout, batch_first=True
-    )
-
-    # Gating
-    self.gate_fc = nn.Linear(d_model * 3, 1)
-
-    # Heads
-    self.lm_head = nn.Linear(d_model, vocab_size)
-    self.emo_head = nn.Linear(d_model, emo_classes)
-    self.stage_head = nn.Linear(d_model, stage_classes)
-    self.safety_head = nn.Linear(d_model, 1)
-    self.culture_head = nn.Linear(d_model, cultures)
-
-    # VIB
+_tower = nn.TransformerEncoderLayer(
+        d_model=d_model, nhead=nhead, dropout=dropout, 
     self.posterior = nn.Linear(d_model, d_model)
     self.prior = nn.Linear(d_model, d_model)
 
 def forward(self, x: torch.Tensor, env: torch.Tensor, culture_id: torch.Tensor):
     """
-    x: [batch, seq] token IDs
-    env: [batch, seq, d_model] environment features
-    culture_id: [batch] integers
-    """
-    x_embed = self.embedding(x)                           # [B, T, D]
-    env_embed = self.env_proj(env)                        # [B, T, D]
-    culture_vec = self.culture_embed(culture_id)          # [B, D]
-    culture_vec = culture_vec.unsqueeze(1).expand_as(x_embed)  # [B, T, D]
-
-    # Towers
+    
     c_out = self.cognitive_tower(x_embed + culture_vec)       # [B, T, D]
     e_out = self.emotional_tower(x_embed + env_embed + culture_vec)  # [B, T, D]
 
     # Dynamic gating
     q_t = torch.mean(env_embed, dim=1)                    # [B, D]
     gate_input = torch.cat([c_out.mean(1), e_out.mean(1), q_t], dim=1)  # [B, 3D]
-    G_t = torch.sigmoid(self.gate_fc(gate_input)).unsqueeze(1)          # [B, 1]
-
-    # Fusion (simple linear fusion; can swap for MHA fusion if desired)
-    fused = G_t * e_out + (1.0 - G_t) * c_out            # [B, T, D]
+    G_t = torch.sigmoid(self.gate_c_out            # [B, T, D]
 
     # Heads
     lm_logits = self.lm_head(fused)                      # [B, T, V]
